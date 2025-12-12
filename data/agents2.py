@@ -9,6 +9,16 @@ from ollama import Client
 # 
 # Agent core
 #
+class RunawayResponse(Exception): 
+    pass
+
+class InvalidResponseFormat(Exception): 
+    pass
+
+class InvalidActionInput(Exception): 
+    pass
+
+
 class Agent:
     """A simple AI agent that can answer questions by planning and performing multiple steps"""
 
@@ -52,6 +62,9 @@ class Agent:
                 _ = self.messages.pop() # Input that will be retried
                 print(f"---- Discarding:\n{response}\n----")
                 continue # Loop again
+            except InvalidResponseFormat:
+                step_input = "Observation: Error: Invalid response format"
+                continue # Loop again
             except InvalidActionInput:
                 step_input = "Observation: Error: Invalid Action Input format"
                 continue # Loop again
@@ -65,7 +78,7 @@ class Agent:
                 result = self.known_actions[action.strip()](**action_input)
                 step_input = f"Observation: {result}" # Feed back result of tool call
             except:
-                 step_input = f"Observation: Error: There was a problem using the tool ('{action}') with the given input."
+                step_input = f"Observation: Error: There was a problem using the tool ('{action}') with the given input."
                
             if action == answer.__name__:
                 return result # Done
@@ -103,19 +116,9 @@ class Agent:
 #
 # Parse Response
 #
-class RunawayResponse(Exception): 
-    pass
-
-class InvalidResponseFormat(Exception): 
-    pass
-
-class InvalidActionInput(Exception): 
-    pass
-
-
 def parse_response(response) -> (str, dict):
     """
-    Parse the LLM response to extract action, action input, and final answer.
+    Parse the LLM response to extract action and action input.
     """    
     # Capture tool name following 'Action:'
     RE_ACTION = re.compile(r'^Action:\s*([_a-zA-Z][_a-zA-Z0-9]*)', re.MULTILINE)
@@ -134,7 +137,7 @@ def parse_response(response) -> (str, dict):
         raise InvalidResponseFormat
         
     if len(action_match) > 1 or len(action_match) > 1:
-        # Multiple 'Action:' or 'Action Input:' means we have a runaway response
+        # Multiple 'Action:' or 'Action Input:' lines means we have a runaway response
         raise RunawayResponse
 
     # Get the first response    
@@ -154,7 +157,8 @@ def parse_response(response) -> (str, dict):
 #
 def gen_sysprompt(tools: list | None = None) -> str:
     tools = tools or []
-
+    tools.append(answer) # The answer tool is always avilable
+    
     preamble = sysprompt_preamble()
     tool_info = sysprompt_tools(tools)
     instructions = sysprompt_react_instructions()
@@ -168,6 +172,26 @@ def sysprompt_preamble() -> str:
         ALWAYS prefer using tools to relying on your general knowledge, e.g. if you have access to a calcuator ALWAYS use it to evaluate formulas.
 
         """)
+
+def sysprompt_tools(tools: list) -> str:
+
+    preamble = """
+        ## Tools
+        
+        You are responsible for using the tools in any sequence you deem appropriate to complete the task at hand.
+        This may require breaking the task into subtasks and using different tools to complete each subtask.
+
+        You have access to the following tools:
+
+        """
+
+    docs = [cleandoc(preamble)]
+    for tool in tools:
+        tool_name = tool.__name__
+        tool_doc = cleandoc(tool.__doc__)
+        docs.append(f"\n> Tool Name: {tool_name}\n{tool_doc}\n")
+
+    return "\n".join(docs)
 
 def sysprompt_react_instructions() -> str:
     instructions = """
@@ -230,37 +254,6 @@ def sysprompt_react_instructions() -> str:
         """
 
     return cleandoc(instructions)
-
-
-def sysprompt_tools(tools: list | None) -> str:
-    if not tools: return "## Tools\n\nYou don't have access to any tools.\n"
-
-    preamble = """
-        ## Tools
-        
-        You are responsible for using the tools in any sequence you deem appropriate to complete the task at hand.
-        This may require breaking the task into subtasks and using different tools to complete each subtask.
-
-        You have access to the following tools:
-
-        > Tool Name: answer
-        Conveys your final reply to the user
-    
-        Args:
-            reply (str): Your final reply to the user
-    
-        Returns:
-            str: echoes 'reply'
-        
-        """
-
-    docs = [cleandoc(preamble)]
-    for tool in tools:
-        tool_name = tool.__name__
-        tool_doc = cleandoc(tool.__doc__)
-        docs.append(f"\n> Tool Name: {tool_name}\n{tool_doc}\n")
-
-    return "\n".join(docs)
 
 #
 # Tools
@@ -335,9 +328,7 @@ def web_search(query: str) -> dict:
 
     client = TavilyClient(api_key=API_KEY)
     # Pick out a single hit
-    result = client.search(query)['results'][0] # FIXME: This should really be the entry with the highest score
-    # drop unused key-value pairs
-    result.pop('title', None)
-    result.pop('score', None)
-    result.pop('raw_content', None)
-    return result
+    raw_results = client.search(query)
+    top_result = raw_results['results'][0]
+    
+    return {'url': top_result['url'], 'content': top_result['content']}
