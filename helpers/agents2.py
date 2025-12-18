@@ -1,9 +1,11 @@
 import os
 import re
 import json
+import datetime
 from inspect import cleandoc
 
 from ollama import Client
+from tavily import TavilyClient
 
 
 # 
@@ -240,11 +242,12 @@ def sysprompt_react_instructions() -> str:
         Observation: [tool use result (e.g. 'Stockholm') or an error message (e.g. 'Error: Invalid input') in case of failure]
         ```
 
-        Use JSON formatted data for the Action Input, e.g. {"input": "hello world", "num_beams": 5}.
+        Use JSON formatted data for the Action Input argument, e.g. {"input": "hello world", "num_beams": 5}.
         ALWAYS use a dictionary as the root object in JSON data.
         If the tool does not require any input, you MUST provide an empty dictionary as action input, i.e. "Action Input: {}".
+        NEVER continue after completing the Action Input argument.
 
-        You should keep repeating the above step until you have enough information to answer without using any more tools. At that point, you MUST respond in using format 2 or 3.
+        You should keep repeating the above steps until you have enough information to answer without using any more tools. At that point, you MUST respond in using format 2 or 3.
 
 
         ## Current Conversation
@@ -258,10 +261,6 @@ def sysprompt_react_instructions() -> str:
 #
 # Tools
 #
-
-import datetime
-
-from tavily import TavilyClient
 
 def answer(reply: str) -> str:
     """
