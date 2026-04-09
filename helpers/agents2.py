@@ -7,10 +7,20 @@ from inspect import cleandoc
 from ollama import Client
 from tavily import TavilyClient
 
+# -------------------------------------------------------------
+# Helper
+# -------------------------------------------------------------
+from IPython import display
 
-# 
+def show_messages(messages):
+    """Helper function to view messages in a nice format"""
+    s = json.loads(json.dumps(messages, default=dict))
+    return display.JSON(s, root="Message history")
+
+
+# -------------------------------------------------------------
 # Agent core
-#
+# -------------------------------------------------------------
 class RunawayResponse(Exception): 
     pass
 
@@ -29,18 +39,20 @@ class Agent:
         Instantiate an agent
         Provide a model name and (optionally) a list of tools
         """
-        tools = [answer] + (tools or []) # Always have access to 'answer'
-        self.known_actions = {tool.__name__: tool for tool in tools}
-        self.client = Client(host)
         self.model = model
-        self.system_message = gen_sysprompt(tools)
-        # print(f"====\n{self.system_message}\n====")
-        self.messages = [{"role":"system", "content": self.system_message}]
+        self.tools = [answer] + (tools or []) # Always have access to 'answer'
+        self.known_tools = {tool.__name__: tool for tool in self.tools}
+        self.client = ollama.Client(host)
 
+        self.system_message = generate_system_prompt(self.tools)
+        self.messages = [{"role":"system", "content": self.system_message}]
 
     def task(self, user_query: str, max_steps: int = 10):
         """Public interface"""
-        return self._perform_steps(user_query, max_steps)
+        result = self._perform_steps(user_query, max_steps)
+        ## Pretty-print output
+        from IPython.display import display, Markdown
+        display(Markdown("---\n\n" + result + "\n\n---\n"))
 
     def _perform_steps(self, step_input: str, max_steps: int):
         """
@@ -49,89 +61,82 @@ class Agent:
         Return an error message if a conclusion cannot be reached in maximum number of steps (default 10)
         """
         i = 0
-
         while i < max_steps:
             i += 1
             print(f"Step #{i}")
+            print("just a moment ...")
 
-            response = self._chat(step_input)
+            # Append input to message history ...
+            self.messages.append({"role": "user", "content": step_input})
+            # ... and pass full message history to model
+            raw_response = self.client.chat(
+                model=self.model,
+                messages=self.messages,
+                options={"num_ctx": 32768}
+            )
+            response = raw_response.message.content
+            # Append response to message history
+            self.messages.append({"role": "assistant", "content": response})
+
+            # Parse the response
             try:
                 action, action_input = parse_response(response)
-            except RunawayResponse:
-                print("Runaway response, let's pretend it never happened...")
-                # Delete two last entries in message history
-                _ = self.messages.pop() # Bad resonse
-                _ = self.messages.pop() # Input that will be retried
-                print(f"---- Discarding:\n{response}\n----")
-                continue # Loop again
             except InvalidResponseFormat:
                 step_input = "Observation: Error: Invalid response format"
                 continue # Loop again
             except InvalidActionInput:
                 step_input = "Observation: Error: Invalid Action Input format"
                 continue # Loop again
-                     
-            if action not in self.known_actions: # Check that we have that tool...
+            except RunawayResponse:
+                print("Runaway response, let's pretend it never happened...")
+                # Delete two last entries in message history
+                _ = self.messages.pop() # The bad response
+                _ = self.messages.pop() # The input that caused the bad response
+                print(f"---- Discarding:\n{response}\n----")
+                # 'step_input' is uncanged and will be retried
+                continue # Loop again
+
+            # The response was correctly formatted
+            if action not in self.known_tools: # Check that we have that tool...
                 step_input = f"Observation: Error: Invalid action ({action})"
                 continue # Loop again
 
+            # Call the tool with the provided arguments
             try:
                 print(f"Using tool '{action}'...")
-                result = self.known_actions[action.strip()](**action_input)
+                result = self.known_tools[action.strip()](**action_input)
                 step_input = f"Observation: {result}" # Feed back result of tool call
             except:
                 step_input = f"Observation: Error: There was a problem using the tool ('{action}') with the given input."
                
+            # Are we done?
             if action == answer.__name__:
                 return result # Done
 
         # We hit the maximum number of steps, the LLM is likely very confused
         return f"Agent was unable to answer your question in the maximal number of steps ({max_steps})"
 
-    def _chat(self, message: str):
-        """Process a message and return a response"""
 
-        print("just a moment ...")
-
-        self.messages.append({"role": "user", "content": message})
-
-        response = self.client.chat(
-            model=self.model,
-            messages=self.messages,
-            options={"num_ctx": 32768}
-        )
-        text = response.message.content
-
-        # Store assistant's response in short-term memory
-        self.messages.append({"role": "assistant", "content": text})
-        return text
-
-    #
-    # Debugging helper
-    #
-    def message_history(self):
-        """
-        Return a description of the steps taken to arrive at the answer (excluding system prompt).
-        """
-        return "\n".join([f"**{msg['role']}**:\n{msg['content']}\n" for msg in self.messages[1:]])
-
-#
+# -------------------------------------------------------------
 # Parse Response
-#
+# -------------------------------------------------------------
 def parse_response(response) -> (str, dict):
     """
     Parse the LLM response to extract action and action input.
-    """    
+    """
+    # Define regexes to capture relevant sections
     # Capture tool name following 'Action:'
     RE_ACTION = re.compile(r'^Action:\s*([_a-zA-Z][_a-zA-Z0-9]*)', re.MULTILINE)
     # Capture JSON following 'Action Input:'
     RE_ACTION_INPUT = re.compile(r'^Action Input:\s*({.*})', re.MULTILINE | re.DOTALL)
+    # 'Observation:' should never be part of the model response
+    RE_OBSERVATION = re.compile(r'Observation:', re.MULTILINE)
 
     # Try to detect eagerness, i.e. 'Observation:' in (runaway) response
-    RE_OBSERVATION = re.compile(r'Observation:', re.MULTILINE)
     if RE_OBSERVATION.search(response) is not None:
         raise RunawayResponse
-    
+
+    # Response should always have exactly one 'Action:' and one 'Action Input:' entry
     action_match = RE_ACTION.findall(response)
     input_match = RE_ACTION_INPUT.findall(response)
 
@@ -142,7 +147,7 @@ def parse_response(response) -> (str, dict):
         # Multiple 'Action:' or 'Action Input:' lines means we have a runaway response
         raise RunawayResponse
 
-    # Get the first response    
+    # Get the action (tool) and the action input (argument)
     action = action_match[0]
     action_input_string = input_match[0]
     
@@ -154,9 +159,11 @@ def parse_response(response) -> (str, dict):
         raise InvalidActionInput
     
     return (action, action_input)
-#
+
+
+# -------------------------------------------------------------
 # System prompt
-#
+# -------------------------------------------------------------
 def gen_sysprompt(tools: list | None = None) -> str:
     tools = tools or []
     tools.append(answer) # The answer tool is always avilable
@@ -169,9 +176,9 @@ def gen_sysprompt(tools: list | None = None) -> str:
 
 def sysprompt_preamble() -> str:
     return cleandoc("""
-        You are an assistant that breaks down problems into multiple, simple steps and solves them systematically.
+        You break down problems into subtasks and solve them one-by-one, potentially using tools.
         You have access to tools defined in the 'Tools' section.
-        ALWAYS prefer using tools to relying on your general knowledge, e.g. if you have access to a calcuator ALWAYS use it to evaluate formulas.
+        ALWAYS use a tool if an appropriate on exists, e.g. if you have access to a calcuator ALWAYS use it to evaluate formulas.
 
         """)
 
@@ -180,9 +187,6 @@ def sysprompt_tools(tools: list) -> str:
     preamble = """
         ## Tools
         
-        You are responsible for using the tools in any sequence you deem appropriate to complete the task at hand.
-        This may require breaking the task into subtasks and using different tools to complete each subtask.
-
         You have access to the following tools:
 
         """
@@ -212,7 +216,7 @@ def sysprompt_react_instructions() -> str:
         1. If you need more information to answer the question:
 
         ```
-        Thought: I need to use a tool to help me answer the question.
+        Thought: [I need to use a tool to solve this subtask]
         Action: [tool name]
         Action Input: [the input to the tool, in JSON format representing the kwargs (e.g. {"input": "hello world", "num_beams": 5})]
         ```
@@ -234,7 +238,6 @@ def sysprompt_react_instructions() -> str:
         ```
 
         ALWAYS start with a Thought followed by an Action and finally an Action Input.
-        NEVER surround your response with markdown code markers.
 
         If you decide that a tool other than 'answer' is required, the result will be reported in the following form:
 
@@ -242,29 +245,23 @@ def sysprompt_react_instructions() -> str:
         Observation: [tool use result (e.g. 'Stockholm') or an error message (e.g. 'Error: Invalid input') in case of failure]
         ```
 
-        Use JSON formatted data for the Action Input argument, e.g. {"input": "hello world", "num_beams": 5}.
+        Use JSON formatted data for the Action Input, e.g. {"input": "hello world", "num_beams": 5}.
         ALWAYS use a dictionary as the root object in JSON data.
         If the tool does not require any input, you MUST provide an empty dictionary as action input, i.e. "Action Input: {}".
-        NEVER continue after completing the Action Input argument.
 
-        You should keep repeating the above steps until you have enough information to answer without using any more tools. At that point, you MUST respond in using format 2 or 3.
-
-
-        ## Current Conversation
-
-        Below is the current conversation consisting of interleaving user and assistant messages.
+        Repeate the above until you have enough information to answer without using any more tools. At that point, you MUST respond in using format 2 or 3.
 
         """
 
     return cleandoc(instructions)
 
-#
-# Tools
-#
 
+# -------------------------------------------------------------
+# Tools
+# -------------------------------------------------------------
 def answer(reply: str) -> str:
     """
-    Conveys your final reply to the user
+    Conveys your final reply to the user. If any images were produced you can show them using the notation '![](work/<foo.png>)'
 
     Args:
         reply (str): Your final reply to the user
@@ -274,7 +271,8 @@ def answer(reply: str) -> str:
 
     """
     return reply
-    
+
+
 def date() -> str:
     """
     Reports the current date and time
