@@ -205,51 +205,43 @@ def sysprompt_react_instructions() -> str:
 
         ALWAYS use the following format in your response (EXACTLY one each of 'Thought:', 'Action:' and 'Action Input:'):
 
-        ```
         Thought: [your current thought]
         Action: [tool name]
         Action Input: [the input to the tool, in JSON format representing the kwargs (e.g. {"input": "hello world", "num_beams": 5})]
-        ```
 
         Please communicate in the same language as the question and use ONLY one of the following three alternatives:
 
-        1. If you need more information to answer the question:
+        ### 1. If you need more information to answer the question:
 
-        ```
         Thought: [I need to use a tool to solve this subtask]
         Action: [tool name]
         Action Input: [the input to the tool, in JSON format representing the kwargs (e.g. {"input": "hello world", "num_beams": 5})]
-        ```
 
-        2. If you have enough information to answer the question:
+        ### 2. If you have enough information to answer the question:
 
-        ```
         Thought: I can answer without using any more tools.
         Action: answer
         Action Input: [your answer, in JSON format (e.g. {"reply": "OK"})]
-        ```
 
-        3. If you cannot answer the question even after using tools to retrieve more information:
+        ### 3. If you cannot answer the question even after using tools to retrieve more information:
 
-        ```
         Thought: I cannot answer the question with the provided tools.
         Action: answer
         Action Input: [your answer, in JSON format (e.g. {"reply": "Sorry"})]
-        ```
+
+        ## Guidelines
 
         ALWAYS start with a Thought followed by an Action and finally an Action Input.
 
         If you decide that a tool other than 'answer' is required, the result will be reported in the following form:
 
-        ```
         Observation: [tool use result (e.g. 'Stockholm') or an error message (e.g. 'Error: Invalid input') in case of failure]
-        ```
 
         Use JSON formatted data for the Action Input, e.g. {"input": "hello world", "num_beams": 5}.
         ALWAYS use a dictionary as the root object in JSON data.
         If the tool does not require any input, you MUST provide an empty dictionary as action input, i.e. "Action Input: {}".
 
-        Repeate the above until you have enough information to answer without using any more tools. At that point, you MUST respond in using format 2 or 3.
+        Repeat the above until you have enough information to answer without using any more tools. At that point, you MUST respond using format 2 or 3.
 
         """
 
@@ -261,7 +253,8 @@ def sysprompt_react_instructions() -> str:
 # -------------------------------------------------------------
 def answer(reply: str) -> str:
     """
-    Conveys your final reply to the user. If any images were produced you can show them using the notation '![](work/<foo.png>)'
+    Conveys your final reply to the user. 
+    If any images were produced you can show them using the notation '![](work/<foo.png>)'
 
     Args:
         reply (str): Your final reply to the user
