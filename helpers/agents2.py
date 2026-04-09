@@ -4,7 +4,7 @@ import json
 import datetime
 from inspect import cleandoc
 
-from ollama import Client
+import ollama
 from tavily import TavilyClient
 
 # -------------------------------------------------------------
@@ -164,7 +164,7 @@ def parse_response(response) -> (str, dict):
 # -------------------------------------------------------------
 # System prompt
 # -------------------------------------------------------------
-def gen_sysprompt(tools: list | None = None) -> str:
+def generate_system_prompt(tools: list | None = None) -> str:
     tools = tools or []
     tools.append(answer) # The answer tool is always avilable
     
