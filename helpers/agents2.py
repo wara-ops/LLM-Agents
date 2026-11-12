@@ -93,7 +93,7 @@ class Agent:
                 _ = self.messages.pop() # The bad response
                 _ = self.messages.pop() # The input that caused the bad response
                 print(f"---- Discarding:\n{response}\n----")
-                # 'step_input' is uncanged and will be retried
+                # 'step_input' is unchanged and will be retried
                 continue # Loop again
 
             # The response was correctly formatted
@@ -140,10 +140,10 @@ def parse_response(response) -> (str, dict):
     action_match = RE_ACTION.findall(response)
     input_match = RE_ACTION_INPUT.findall(response)
 
-    if len(action_match) == 0 or len(action_match) == 0:
+    if len(action_match) == 0 or len(input_match) == 0:
         raise InvalidResponseFormat
         
-    if len(action_match) > 1 or len(action_match) > 1:
+    if len(action_match) > 1 or len(input_match) > 1:
         # Multiple 'Action:' or 'Action Input:' lines means we have a runaway response
         raise RunawayResponse
 
@@ -178,7 +178,7 @@ def sysprompt_preamble() -> str:
     return cleandoc("""
         You break down problems into subtasks and solve them one-by-one, potentially using tools.
         You have access to tools defined in the 'Tools' section.
-        ALWAYS use a tool if an appropriate on exists, e.g. if you have access to a calcuator ALWAYS use it to evaluate formulas.
+        ALWAYS use a tool if an appropriate one exists, e.g. if you have access to a calcuator ALWAYS use it to evaluate formulas.
 
         """)
 
